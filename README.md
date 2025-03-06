@@ -11,6 +11,13 @@ This system provides automated detection and blocking of malicious domains by:
 * Providing real-time domain validation whether a domain is categorized by Amazon Route53 Resolver DNS Firewall as suspicious or not 
 * Sending automated notifications for detected threats
 
+## Use-Cases
+
+This post addresses the following use cases for Amazon Route 53 Resolver DNS Firewall:
+* Security teams can enforce domain access restrictions for the Amazon Virtual Private Clouds (VPCs) in the organization, to meet security and compliance requirements.
+* Domain parking businesses can verify and screen domains against AWS managed lists and custom blocklists before accepting them on their platform.
+* Organizations can block malicious domains and protect their employee workstations by implementing this solution for their VPCs, for security or compliance reasons.
+
 ## Architecture
 
 ![Route53 Resolver DNSFirewall Tool Architecture ](./images/architecture-blog.png)
