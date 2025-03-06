@@ -60,49 +60,43 @@ zip -r dnslib.zip python
 
 ## Using AWS Managed Domain List
 
-**Step 1:** Upload a CSV file with the name domains.csv containing a list of domains to be validated as malicious or not, to an S3 bucket aws-checkdomains-<AWS_Account_Number> set up by the CloudFormation stack. In the screenshot below, we show sample domains to be validated.
+**Step 1:** Upload a CSV file with the name `domains.csv` containing a list of domains to be validated as malicious or not, to an S3 bucket `aws-checkdomains-<AWS_Account_Number>` set up by the CloudFormation stack. In the screenshot below, we show sample domains to be validated.
 
 ![Route53 Resolver DNSFirewall Tool Architecture ](./images/domains.png)
 
-Note: The name of the file must be domains.csv. If any other file name is provided, then the domains list isn’t picked up. If you want to change the file name, then you can modify the Lambda code in the function `DNSDomainResolutionLambda`
+**Note:** The name of the file must be domains.csv. If any other file name is provided, then the domains list isn’t picked up. If you want to change the file name, then you can modify the Lambda code in the function `DNSDomainResolutionLambda`.
 
 **Step 2:** Obtain the DNS Lookup REST API from CloudFormation Stack Output published by API Gateway, to
-perform the DNS domain lookup and trigger the API, as shown in Figure 4. Obtain the API Key from the API
-Gateway console. You can use the ‘x-api-key’ in the header and enter the value as the API Key obtained from the API Gateway console. You can use tools such as postman, curl, your own code, etc. to trigger the API.
+perform the DNS domain lookup and trigger the API, as shown below. Obtain the API Key from the API
+Gateway console. You can use the `x-api-key` in the header and enter the value as the API Key obtained from the API Gateway console. You can use tools such as postman, curl, your own code, etc. to trigger the API.
 
 ![Route53 Resolver DNSFirewall Tool Architecture ](./images/cfoutputs.png)
 
-**Step 3:** Responses are saved in the same S3 bucket as dnsanswers.csv. You should see the status code as 200 returned by the Amazon Route 53 DNS Firewall for successfully resolved domains and a status code in 500s for malicious domains tagged by the DNS Firewall Managed Domain List (In screenshot below, we show 501: domains blocked by managed list/custom list. 502: errors such as domain does not exist and others).
+**Step 3:** Responses are saved in the same S3 bucket as `dnsanswers.csv`. You should see the status code as 200 returned by the Amazon Route 53 DNS Firewall for successfully resolved domains and a status code in 500s for malicious domains tagged by the DNS Firewall Managed Domain List (In screenshot below, we show 501: domains blocked by managed list/custom list. 502: errors such as domain does not exist and others).
 
 ![Route53 Resolver DNSFirewall Tool Architecture ](./images/responses.png)
 
-**Step 4:** Simultaneously, the Administrator receives an instant alert about three domains reporting 501 status code as shown in the Figure 6. For the complete list, refer to the dnsanswers.csv file in the aws-checkdomains-<AWS_Account_Number> S3 bucket. 
+**Step 4:** Simultaneously, the Administrator receives an instant alert about three domains reporting 501 status code as shown in the Figure 6. For the complete list, refer to the `dnsanswers.csv` file in the aws-checkdomains-<AWS_Account_Number> S3 bucket. 
  
  ![Route53 Resolver DNSFirewall Tool Architecture ](./images/snsnotification.jpg)
 
 ## Using Custom Domain List
 
-* Create custom_domains_list.csv with your custom domains
-* Upload to aws-customdomains-<AWS_Account_Number> S3 bucket
-* System will automatically create/update DNS Firewall rules
-* Use the DNS Lookup REST API (available in CloudFormation Stack Output) to trigger domain validation
-* Check results in `dnsanswers.csv` and email notifications
-
-**Step 1:** Prepare a csv file with the name custom_domains_list.csv containing a list of your custom domains as shown below:
+**Step 1:** Prepare a csv file with the name `custom_domains_list.csv` containing a list of your custom domains as shown below:
 
 ![Route53 Resolver DNSFirewall Tool Architecture ](./images/custom-domains.jpg)
 
-If any other file name is provided, then the domains list isn’t picked up. If you want to change the file name, then you can modify the Lambda code in the function “CustomDNSDomainListLambda”. Ensure that there are no duplicate domains in the custom_domains_list.csv file. Otherwise the Lambda function fails with the following error:
+If any other file name is provided, then the domains list isn’t picked up. If you want to change the file name, then you can modify the Lambda code in the function `CustomDNSDomainListLambda`. Ensure that there are no duplicate domains in the `custom_domains_list.csv` file. Otherwise the Lambda function fails with the following error:
 
 ```
 [ERROR] ValidationException: An error occurred (ValidationException) when calling the UpdateFirewallDomains operation: This request contains duplicated domains.  Ensure that every domain is unique."
 ```
 
-**Step 2:** Upload the file to the S3 bucket created by the CloudFormation stack with the name in the format aws-customdomains-<AWS_Account_Number>. You can find this in the CloudFormation Stack Outputs. Once the file is uploaded, a Lambda function is invoked automatically and creates a new Route 53 DNS Firewall domain list with the list of the custom domains. Any future uploads overwrite the same custom list. The DNS Firewall Rule group now contains a combination of Managed List and Custom Domain List as shown below:
+**Step 2:** Upload the file to the S3 bucket created by the CloudFormation stack with the name in the format `aws-customdomains-<AWS_Account_Number>`. You can find this in the CloudFormation Stack Outputs. Once the file is uploaded, a Lambda function is invoked automatically and creates a new Route 53 DNS Firewall domain list with the list of the custom domains. Any future uploads overwrite the same custom list. The DNS Firewall Rule group now contains a combination of Managed List and Custom Domain List as shown below:
 
 ![Route53 Resolver DNSFirewall Tool Architecture ](./images/rules.jpg)
 
-**Step 3:** For testing the custom domains configuration, upload domains.csv to the S3 bucket aws-checkdomains-<AWS_Account_Number> and obtain the DNS Lookup REST API from CloudFormation Stack Output as done previously (APIGatewayURL). You should see that the requests to these newly added domains are blocked by the custom domain list as shown in the Figure 9.
+**Step 3:** For testing the custom domains configuration, upload `domains.csv` to the S3 bucket `aws-checkdomains-<AWS_Account_Number>` and obtain the DNS Lookup REST API from CloudFormation Stack Output as done previously (APIGatewayURL). You should see that the requests to these newly added domains are blocked by the custom domain list as shown in the Figure 9.
 
 ![Route53 Resolver DNSFirewall Tool Architecture ](./images/results_custom.jpg)
 
@@ -111,7 +105,7 @@ If any other file name is provided, then the domains list isn’t picked up. If 
 
 To avoid incurring future charges, delete the CloudFormation stack by following these steps:
 Use the AWS Management Console:
-* Delete the contents of S3 buckets: aws-checkdomains-<AWS_Account_Number> and aws-customdomains-<AWS_Account_Number>.
+* Delete the contents of S3 buckets: `aws-checkdomains-<AWS_Account_Number>` and `aws-customdomains-<AWS_Account_Number>`.
 * Navigate to the CloudFormation service.
 * Locate the stack you want to delete in the list of stacks.
 * Choose the stack, and then choose the Delete button in the stack actions menu.
@@ -127,8 +121,8 @@ Here are few important things to know
 
 ## Authors
 
-Omer Shariff
-Sindhura Palakodety
+Sindhura Palakodety, AWS Senior Solutions Architect
+Omer Shariff, AWS T&S Customer Advisor I 
 
 ## License
 
