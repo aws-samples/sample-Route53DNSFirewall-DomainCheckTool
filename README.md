@@ -121,8 +121,8 @@ Here are few important things to know
 
 ## Authors
 
-Sindhura Palakodety, AWS Senior Solutions Architect
-Omer Shariff, AWS T&S Customer Advisor I 
+* Sindhura Palakodety, AWS Senior Solutions Architect
+* Omer Shariff, AWS T&S Customer Advisor I 
 
 ## License
 
