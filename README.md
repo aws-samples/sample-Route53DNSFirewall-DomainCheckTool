@@ -130,9 +130,9 @@ This library is licensed under the MIT-0 License. See the LICENSE file.
 
 ## Additional Resources
 
-[Route 53 Developer Guide](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/Welcome.html)
-[Route 53 Forum](https://forums.aws.amazon.com/forum.jspa?forumID=87)
-[AWS Support](https://aws.amazon.com/support)
+* [Route 53 Developer Guide](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/Welcome.html)
+* [Route 53 Forum](https://forums.aws.amazon.com/forum.jspa?forumID=87)
+* [AWS Support](https://aws.amazon.com/support)
 
 ## Security
 
