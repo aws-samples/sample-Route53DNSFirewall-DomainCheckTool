@@ -1,4 +1,4 @@
-## Route 53 DNS Firewall Domain Detection System
+## Using Amazon Route 53 Resolver DNS Firewall to detect malicious domains
 
 A solution for detecting and blocking malicious domains using Amazon Route 53 Resolver DNS Firewall, leveraging both AWS Managed Domain Lists and custom blocklists.
 
