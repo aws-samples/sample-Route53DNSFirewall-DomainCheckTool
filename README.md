@@ -46,17 +46,17 @@ zip -r dnslib.zip python
 
 **Deploy CloudFormation Stack**
 
-* Launch the CloudFormation stack using the provided template `dnsfirewall.yaml`
+* Launch the CloudFormation stack using the provided template `dnsfirewall.yaml` by heading to the CloudFormation service in AWS Console.
 * Configure the following parameters:
-        **Stack name**
-        **DNSFirewallManagedDomainListId:**
-            *   Navigate to Amazon Virtual Private Cloud (Amazon VPC) service and click on VPC dashboard 
-            *   In the left navigation pane, under DNS Firewall choose Domain lists.
-            *   Look for the domain list named “AWSManagedDomainsAggregateThreatList” 
-            *   The ID of the AWSManagedDomainsAggregateThreatList is displayed in the ID column next to its name. It typically starts with “rslvr-fdl-” followed by a unique identiﬁer.
-        ![Route53 Resolver DNSFirewall Tool Architecture ](./images/cf-parameters.png)
-        **SNSEmailAddress:** Email address of the administrator to receive emails
-        **DNSLIBS3Bucket:** S3 bucket where you uploaded the dnslib.zip ﬁle
+* **Stack name**
+* **DNSFirewallManagedDomainListId:**
+    *  Navigate to Amazon Virtual Private Cloud (Amazon VPC) service and click on VPC dashboard 
+    *   In the left navigation pane, under DNS Firewall choose Domain lists.
+    *   Look for the domain list named “AWSManagedDomainsAggregateThreatList” 
+    *   The ID of the AWSManagedDomainsAggregateThreatList is displayed in the ID column next to its name. It typically starts with “rslvr-fdl-” followed by a unique identiﬁer.
+    ![Route53 Resolver DNSFirewall Tool Architecture ](./images/cf-parameters.png)
+* **SNSEmailAddress:** Email address of the administrator to receive emails
+* **DNSLIBS3Bucket:** S3 bucket where you uploaded the dnslib.zip ﬁle
 
 ## Using AWS Managed Domain List
 
