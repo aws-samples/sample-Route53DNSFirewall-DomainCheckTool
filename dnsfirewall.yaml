@@ -1,0 +1,585 @@
+Parameters:
+  DNSFirewallManagedDomainListId:
+    Type: String
+    Description: DNS Firewall managed domain list ID
+  SNSEmailAddress:
+    Type: String
+    Description: Email address to send the notifications
+  DNSLIBS3bucket:
+    Type: String
+    Description: S3 Bucket where you uploaded the dnslib.zip file
+
+Resources:
+# creating S3 buckets to store the domains list and answers. Also to store custom domain list
+  CheckDomainsBucket: 
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub aws-checkdomains-${AWS::AccountId}-${AWS::Region}
+#enable eventbridge configuration on the bucket
+  CustomDomainsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub aws-customdomains-${AWS::AccountId}-${AWS::Region}
+      NotificationConfiguration:
+        EventBridgeConfiguration:
+          EventBridgeEnabled: true
+  DNSFirewallVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      InstanceTenancy: default
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-DNSFirewallVPC
+  DNSFirewallInternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-DNSFirewallInternetGateway
+  DNSFirewallAttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref DNSFirewallVPC
+      InternetGatewayId: !Ref DNSFirewallInternetGateway
+  DNSFirewallPublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref DNSFirewallVPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: 10.0.1.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-DNSFirewallPublicSubnet
+  DNSFirewallPublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref DNSFirewallVPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-DNSFirewallPublicRouteTable
+  DNSFirewallPublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: DNSFirewallAttachGateway
+    Properties:
+      RouteTableId: !Ref DNSFirewallPublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref DNSFirewallInternetGateway
+  DNSFirewallPublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref DNSFirewallPublicSubnet
+      RouteTableId: !Ref DNSFirewallPublicRouteTable
+
+# Creating a DNS Firewall Rule Group to block the domains with custom responses
+  DNSFirewallRuleGroup:
+    Type: AWS::Route53Resolver::FirewallRuleGroup
+    Properties:
+      FirewallRules:
+          -
+            Action: BLOCK
+            BlockResponse: OVERRIDE
+            BlockOverrideDnsType: CNAME
+            BlockOverrideDomain: "BLOCKED-BY-DNSFIREWALL-MANAGEDLIST"
+            BlockOverrideTtl: 0
+            FirewallDomainListId: !Ref DNSFirewallManagedDomainListId
+            Priority: 1
+# Creating a DNS Firewall Rule Group Association to associate a VPC with the rule group
+  DNSFirewallRuleGroupAssociation:
+    Type: AWS::Route53Resolver::FirewallRuleGroupAssociation
+    Properties:
+      FirewallRuleGroupId: !Ref DNSFirewallRuleGroup
+      Priority: 104
+      VpcId: !Ref DNSFirewallVPC
+
+# Create a standard SNS topic to send the notifications about domain resolution answers with subscription as email
+  DomainResolutionTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: DomainResolutionTopic
+      TopicName: DomainResolutionTopic
+      Subscription:
+        - Endpoint: !Ref SNSEmailAddress
+          Protocol: email
+
+# Create S3 VPC endpoint to allow S3 access from VPC
+  S3VPCGatewayEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
+      VpcEndpointType: Gateway
+      VpcId: !Ref DNSFirewallVPC
+      RouteTableIds:
+        - !Ref DNSFirewallPublicRouteTable
+
+# Creating Lambda execution role to allow S3 access, SNS, EC2 network interfaces
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub DNSDomainResolutionLambdaExecutionRole-${AWS::Region}
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: !Sub DNSDomainResolutionLambdaExecutionPolicy-${AWS::Region}
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                  - s3:PutObject
+                # Resource: !GetAtt CheckDomainsBucket.Arn/*
+                Resource: 
+                  - !Join 
+                    - ''
+                    - - 'arn:aws:s3:::'
+                      - !Ref CheckDomainsBucket
+                      - '/*'
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: !Ref DomainResolutionTopic
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:CreateNetworkInterface
+                  - ec2:DeleteNetworkInterface
+                  - ec2:DescribeVpcs
+                  - ec2:DescribeSubnets
+                  - ec2:AssignPrivateIpAddresses
+                  - ec2:UnassignPrivateIpAddresses
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+
+# Lambda layer for dnslib
+  DnslibLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      LayerName: dnsliblambda
+      Description: dnslib library
+      Content:
+        S3Bucket: !Ref DNSLIBS3bucket
+        S3Key: dnslib.zip
+      CompatibleRuntimes:
+        - python3.12
+
+# Creating Lambda function to trigger DNS domain resolution on the domains provided in the domain
+# list and store the answers in S3 bucket using python3 code. Create lambda in VPC. 
+  LambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: DNSDomainResolutionLambda
+      Layers:
+        - !Ref DnslibLayer
+      VpcConfig: 
+        SecurityGroupIds: 
+          - !GetAtt DNSFirewallVPC.DefaultSecurityGroup
+        SubnetIds: 
+          - !Ref DNSFirewallPublicSubnet
+      Environment:
+        Variables: 
+          BUCKET1_NAME: !Ref CheckDomainsBucket
+          BUCKET2_NAME: !Ref CustomDomainsBucket
+          SNSTOPICARN: !Ref DomainResolutionTopic
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: python3.12
+      Timeout: 300
+      Code:
+        ZipFile: |
+          import csv
+          import dns.resolver
+          import json
+          import boto3
+          import io
+          import os
+
+          def lambda_handler(event, context):
+
+              # Initialize the S3 client
+              s3 = boto3.client('s3')
+              sns = boto3.client('sns')
+              
+              checkDomainsBucket = os.environ['BUCKET1_NAME']
+              customDomainsBucket = os.environ['BUCKET2_NAME']
+              snstopicarn = os.environ['SNSTOPICARN']
+              file_key = 'domains.csv'
+            
+              results = []
+              final_status = 200
+
+              # Read the CSV file from S3
+              response = s3.get_object(Bucket=checkDomainsBucket, Key=file_key)
+              csv_content = response['Body'].read().decode('utf-8')
+
+              # Process the domain data
+              reader = csv.reader(io.StringIO(csv_content))
+              
+              for row in reader:
+                  domain = row[0]  # Assuming the domain is in the first column
+                  ips = ""
+                  
+                  try:
+                      # Create a resolver
+                      my_resolver = dns.resolver.Resolver()
+                      # Query for the A record of the domain
+                      answer = my_resolver.resolve(domain, 'A')
+                      # Prepare the response
+                      ips = [ip.to_text() for ip in answer]
+                      statusCode = 200
+                      domain_result = {
+                          'statusCode': statusCode,
+                          'domain': domain,
+                          'result': ips,
+                          'info': 'Successfully Resolved'
+                      }
+                      
+                      results.append(domain_result)
+                  
+                  except (dns.resolver.NoAnswer,dns.resolver.NXDOMAIN) as e:
+                      try:
+                          answer = my_resolver.resolve(domain, 'CNAME')
+                          cname_result = [record.to_text() for record in answer]
+                          statusCode = 501
+                          cname_result = {
+                              "statusCode": statusCode,
+                              "domain": domain,
+                              "result": str(e),
+                              "info": ''.join(cname_result).rstrip('.')
+                          }
+                          results.append(cname_result)
+                      
+                      except (Exception) as e:
+                          statusCode = 502
+                          error_result = {
+                              "statusCode": statusCode,
+                              "domain": domain,
+                              "result": str(e),
+                              "info": 'NOT blocked by DNS Firewall'
+                          }
+                          results.append(error_result)
+                  
+              # Write the results to a CSV file
+              csv_file_path = '/tmp/dnsanswers.csv'
+              fieldnames = ['statusCode', 'domain', 'result','info']
+              
+              with open(csv_file_path, 'w', newline='') as file:
+                  writer = csv.DictWriter(file, fieldnames=fieldnames)
+                  writer.writeheader()
+                  writer.writerows(results)
+              
+              # Upload the CSV file to S3
+              s3.upload_file(csv_file_path, checkDomainsBucket, 'dnsanswers.csv')
+              results_top3 = [result for result in results if result['statusCode'] == 501][:3]
+              if not results_top3:
+                  results_top3 = [result for result in results if result['statusCode'] == 502][:3]
+              
+              # Publish a message to the specified topic
+              response = sns.publish(
+                  TopicArn=snstopicarn,
+                  Message=f'Three domain check results with statusCode 501 or 502 from the DNS Firewall are: \n {json.dumps(results_top3, indent=2)}. \n Refer to rest of the results in dnsanswers.csv file in your S3 bucket. '
+              )
+
+              # Return the response
+              return {
+                  "statusCode": final_status,
+                  "body": json.dumps(results_top3)
+              }
+
+# Creating Lambda execution role to allow S3 access, SNS, EC2 network interfaces
+  CustomDNSDomainLambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub CustomDNSDomainListLambdaRole-${AWS::Region}
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: !Sub CustomDNSDomainListLambdaPolicy-${AWS::Region}
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - apigateway:GET
+                Resource:
+                  - !Join 
+                    - ''
+                    - - 'arn:aws:apigateway:'
+                      - !Ref AWS::Region
+                      - '::/restapis/'
+                      - '*'
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                  - s3:PutObject
+                Resource: 
+                  - !Join 
+                    - ''
+                    - - 'arn:aws:s3:::'
+                      - !Ref CustomDomainsBucket
+                      - '/*'
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - route53resolver:ListFirewallRuleGroups
+                  - route53resolver:ListFirewallDomains
+                  - route53resolver:ListFirewallRules
+                  - route53resolver:ListFirewallDomainLists
+                  - route53resolver:GetFirewallRuleGroup
+                  - route53resolver:GetFirewallDomainList
+                  - route53resolver:UpdateFirewallDomains
+                  - route53resolver:UpdateFirewallRule
+                  - route53resolver:CreateFirewallRule
+                  - route53resolver:CreateFirewallRuleGroup
+                  - route53resolver:CreateFirewallDomainList
+                Resource: 
+                  - arn:aws:route53resolver:*:*:firewall-rule-group/*
+                  - arn:aws:route53resolver:*:*:firewall-domain-list/*
+                  - arn:aws:route53resolver:*:*:firewall-config/*
+                  - arn:aws:route53resolver:*:*:firewall-rule-group-association/*
+
+# Creating Lambda function to trigger DNS domain resolution on the domains provided in the domain
+# list and store the answers in S3 bucket using python3 code. Create lambda in VPC. 
+# add a resource based policy to trigger this lambda from api gateway
+  CustomDomainLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: CustomDNSDomainListLambda
+      Environment:
+        Variables: 
+          BUCKET2_NAME: !Ref CustomDomainsBucket
+          DNS_FIREWALL_RULEGROUP: !Ref DNSFirewallRuleGroup
+      Handler: index.lambda_handler
+      Role: !GetAtt CustomDNSDomainLambdaExecutionRole.Arn
+      Runtime: python3.12
+      Timeout: 300
+      Code:
+        ZipFile: |
+          import boto3
+          import csv
+          import os
+
+          route53_client = boto3.client('route53resolver')
+          s3_client = boto3.client('s3')
+
+          def lambda_handler(event, context):
+              
+              # Populate the domain list with domains from the CSV file
+              customDomainsBucket = os.environ['BUCKET2_NAME']
+              dnsFirewallRuleGroup = os.environ['DNS_FIREWALL_RULEGROUP']
+              file_key = 'custom_domains_list.csv'
+              
+              # Check if the domain list already exists
+              existing_lists = route53_client.list_firewall_domain_lists()
+              custom_domain_list_name = 'dns_firewall_custom_domain_list'
+              custom_domain_list_id = None
+              
+              for custom_domain_list in existing_lists['FirewallDomainLists']:
+                  if custom_domain_list['Name'] == custom_domain_list_name:
+                      custom_domain_list_id = custom_domain_list['Id']
+                      break
+
+              # If the domain list doesn't exist, create it
+              if custom_domain_list_id is None:
+                  response = route53_client.create_firewall_domain_list(
+                      CreatorRequestId=custom_domain_list_name,
+                      Name=custom_domain_list_name
+                  )
+                  custom_domain_list_id = response['FirewallDomainList']['Id']
+
+              response = s3_client.get_object(Bucket=customDomainsBucket, Key=file_key)
+              csv_body = response['Body'].read().decode('utf-8').split('\n')
+              csv_reader = csv.reader(csv_body)
+              #next(csv_reader)  # This skips the first line of the CSV file
+              domains = [row[0] for row in csv_reader]
+              
+              response = route53_client.update_firewall_domains(
+                  FirewallDomainListId=custom_domain_list_id,
+                  Operation='REPLACE',
+                  Domains=domains
+              )
+            
+              # Get the firewall rules in the specified rule group
+              rule_exists = "false"
+              existing_rule_lists = route53_client.list_firewall_rules(FirewallRuleGroupId=dnsFirewallRuleGroup)
+              custom_rule_name = 'dns_firewall_custom_rule'
+              
+              for rule in existing_rule_lists['FirewallRules']:
+                  if rule['Name'] == custom_rule_name:
+                      rule_exists = "true"
+                      break;
+
+              # Create a firewall rule and associate it with the rule group
+              if rule_exists == "false":
+                  rule_response = route53_client.create_firewall_rule(
+                      CreatorRequestId='custom-domain-requestor',
+                      Name=custom_rule_name,
+                      Priority=2,  # Set the priority as needed
+                      Action='BLOCK',  # Set the action as needed
+                      BlockResponse='OVERRIDE',  # Set the block response as needed
+                      BlockOverrideDnsType='CNAME',
+                      BlockOverrideDomain='BLOCKED-BY-DNSFIREWALL-CUSTOMLIST',
+                      BlockOverrideTtl=0,
+                      FirewallDomainListId=custom_domain_list_id,
+                      FirewallRuleGroupId=dnsFirewallRuleGroup
+                  )
+
+              return {
+                  'statusCode': 200,
+                  'body': 'Rule group already exists'
+              }
+
+  # Generate event bridge rule for triggering the lambda function when an object is uploaded to the custom domains bucket
+  CustomDomainsBucketEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      EventPattern:
+        source:
+          - aws.s3
+        detail-type:
+          - Object Created
+        detail:
+          bucket:
+            name:
+              - !Ref CustomDomainsBucket
+      Name: TriggerCustomDomainLambda
+      Targets:
+        - Arn: !GetAtt CustomDomainLambdaFunction.Arn
+          Id: 'CustomDomainLambdaTarget'
+  
+  # Create the API Gateway REST API
+  DNSFirewallLookupAPI:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: DNSFirewallLookupAPI
+      Parameters:
+        endpointConfigurationTypes: REGIONAL
+
+  # Create a resource in the API Gateway
+  DNSFirewallAPIGWResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !GetAtt DNSFirewallLookupAPI.RootResourceId
+      PathPart: dnsfirewalllookup
+      RestApiId: !Ref DNSFirewallLookupAPI
+
+  # Create a GET method on the resource and integrate it with the Lambda function
+  DNSFirewallAPIGETMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: GET
+      Integration:
+        IntegrationHttpMethod: POST
+        Type: AWS_PROXY
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${LambdaFunction}/invocations
+      ResourceId: !Ref DNSFirewallAPIGWResource
+      RestApiId: !Ref DNSFirewallLookupAPI
+
+  # Deploy the API Gateway
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - DNSFirewallAPIGETMethod
+    Properties:
+      RestApiId: !Ref DNSFirewallLookupAPI
+      StageName: prod
+
+  # Grant permission for API Gateway to invoke the Lambda function
+  LambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref LambdaFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${DNSFirewallLookupAPI}/*/GET/dnsfirewalllookup
+
+  #Creating lambda resource policy statement to invoke lambda from eventbridge
+  CustomDomainLambdaFunctionPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref CustomDomainLambdaFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt CustomDomainsBucketEventRule.Arn
+
+  # Create SNS VPC endpoint to allow S3 access from VPC with DNS enabled
+  SNSVPCGatewayEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.sns
+      VpcEndpointType: Interface
+      VpcId: !Ref DNSFirewallVPC
+      PrivateDnsEnabled: true
+      SubnetIds:
+        - !Ref DNSFirewallPublicSubnet
+  
+Outputs:
+  CheckDomainsBucketName:
+    Value: !Ref CheckDomainsBucket
+    Export:
+      Name: CheckDomainsBucket
+  CustomDomainsBucketName:
+    Value: !Ref CustomDomainsBucket
+    Export:
+      Name: CustomDomainsBucket
+  SNSEmailAddress:
+    Value: !Ref SNSEmailAddress
+    Export:
+      Name: SNSEmailAddress
+  APIGatewayURL:
+    Value: !Sub https://${DNSFirewallLookupAPI}.execute-api.${AWS::Region}.amazonaws.com/prod/dnsfirewalllookup
+    Export:
+      Name: APIGatewayURL
+  VPCID:
+    Value: !Ref DNSFirewallVPC
+    Export:
+      Name: DNSFirewallVPC
+  Subnet:
+    Value: !Ref DNSFirewallPublicSubnet
+    Export:
+      Name: DNSFirewallPublicSubnet
+  RouteTable:
+    Value: !Ref DNSFirewallPublicRouteTable
+    Export:
+      Name: DNSFirewallPublicRouteTable
+  SecurityGroup:
+    Value: !GetAtt DNSFirewallVPC.DefaultSecurityGroup
+    Export:
+      Name: DNSFirewallSecurityGroup
+  InternetGateway:
+    Value: !Ref DNSFirewallInternetGateway
+    Export:
+      Name: DNSFirewallInternetGateway
+  DNSFirewallRuleGroup:
+    Value: !Ref DNSFirewallRuleGroup
+    Export:
+      Name: DNSFirewallRuleGroup
+  
